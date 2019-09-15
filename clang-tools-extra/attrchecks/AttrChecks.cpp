@@ -21,6 +21,8 @@ using DeclVector = std::vector<clang::Decl *>;
 
 using namespace clang;
 
+
+static ASTContext* GlobalContext{ nullptr };
 namespace
 {
 
@@ -32,12 +34,11 @@ namespace
 		void Initialize() {}
 		void Finalize() {}
 
-		static ConstFnDeclVector GetCallerFns(const CallExpr* CallExpr,
-											  ASTContext* Context)
+		static ConstFnDeclVector GetCallerFns(const CallExpr* CallExpr)
 		{
 			ConstFnDeclVector callers{};
 
-			auto Parents = Context->getParents(*CallExpr);
+			auto Parents = GlobalContext->getParents(*CallExpr);
 			while (!Parents.empty()) 
 			{
 				const ast_type_traits::DynTypedNode& Parent = Parents[0];
@@ -49,7 +50,7 @@ namespace
 				}
 
 				else if (auto * S = Parent.get<Stmt>())
-					Parents = Context->getParents(*S);
+					Parents = GlobalContext->getParents(*S);
 			}
 
 			return callers;
@@ -72,7 +73,7 @@ namespace
 			return attrParams;
 		}
 
-		static bool HasCustomAttrParams(const CXXMethodDecl* methodDecl)
+		static bool IsMethodTagged(const CXXMethodDecl* methodDecl)
 		{
 			return !GetCustomAttrParams(methodDecl).empty();
 		}
@@ -90,18 +91,66 @@ namespace
 			return values.size() > 0 && values[0] == "Safe";
 		}
 
-		static bool IsFnTaggedUnSafe(const FunctionDecl* fn) 
+		static bool IsFnTaggedUnsafe(const FunctionDecl* fn)
 		{
 			StringVector values = GetCustomAttrParams(fn);
 			return values.size() > 0 && values[0] == "Unsafe";
 		}
 
 
-		static bool IsMethodInParentTagged(const CXXMethodDecl* md, const ASTContext* Context)
+		static bool IsFnMethodTaggedSafe(const FunctionDecl* fn)
 		{
-			for (auto md : Context->overridden_methods(md))
+			bool isCallerFnSafe = AttrChecks::IsFnTaggedSafe(fn);
+			if (!isCallerFnSafe)
 			{
-				if (HasCustomAttrParams(md))
+				const CXXMethodDecl* md = dyn_cast<CXXMethodDecl>(fn);
+				if (md != nullptr)
+					isCallerFnSafe = AttrChecks::IsMethodInBaseTaggedSafe(md);
+			}
+
+			return isCallerFnSafe;
+		}
+
+		static bool IsFnMethodTaggedUnsafe(const FunctionDecl* fn)
+		{
+			bool isCallerFnUnsafe = AttrChecks::IsFnTaggedUnsafe(fn);
+			if (!isCallerFnUnsafe)
+			{
+				const CXXMethodDecl* md = dyn_cast<CXXMethodDecl>(fn);
+				if (md != nullptr)
+					isCallerFnUnsafe = AttrChecks::IsMethodInBaseTagged(md);
+			}
+			return isCallerFnUnsafe;
+		}
+
+
+		static bool IsMethodInBaseTaggedSafe(const CXXMethodDecl* md)
+		{
+			for (auto md : GlobalContext->overridden_methods(md))
+			{
+				if (IsFnTaggedSafe(md))
+					return true;
+			}
+
+			return false;
+		}
+
+		static bool IsMethodInBaseTaggedUnsafe(const CXXMethodDecl* md)
+		{
+			for (auto md : GlobalContext->overridden_methods(md))
+			{
+				if (IsFnTaggedUnsafe(md))
+					return true;
+			}
+
+			return false;
+		}
+
+		static bool IsMethodInBaseTagged(const CXXMethodDecl* md)
+		{
+			for (auto md : GlobalContext->overridden_methods(md))
+			{
+				if (IsMethodTagged(md))
 					return true;
 			}
 
@@ -111,6 +160,8 @@ namespace
 
 		static bool DebugLogging() { return false; }
 	};
+
+
 
 	class FindNamedClassVisitor
 		: public RecursiveASTVisitor<FindNamedClassVisitor> 
@@ -184,11 +235,11 @@ namespace
 
 			if (methodDecl->isVirtual())
 			{
-				if (!AttrChecks::HasCustomAttrParams(methodDecl) && AttrChecks::IsMethodInParentTagged(methodDecl, Context))
+				if (!AttrChecks::IsMethodTagged(methodDecl) && AttrChecks::IsMethodInBaseTagged(methodDecl))
 				{
 					auto& DE = Context->getDiagnostics();
 					const unsigned ID = DE.getCustomDiagID(clang::DiagnosticsEngine::Error,
-						"Attribute Checker Warning: fn: '%0' is not tagged");
+						"Attribute Checker Failure: fn: '%0' is not tagged");
 
 					auto daigBuilder = DE.Report(methodDecl->getSourceRange().getBegin(), ID);
 					daigBuilder.AddString(methodDecl->getQualifiedNameAsString());
@@ -201,10 +252,11 @@ namespace
 		bool VisitCallExpr(CallExpr* callExpr) 
 		{
 			auto calleeFn = callExpr->getDirectCallee();
-			ConstFnDeclVector callers = AttrChecks::GetCallerFns(callExpr, Context);
+			ConstFnDeclVector callers = AttrChecks::GetCallerFns(callExpr);
 
-			bool isCalleeFnSafe = AttrChecks::IsFnTaggedSafe(calleeFn);
-			bool isCallerFnSafe = AttrChecks::IsFnTaggedSafe(callers[0]);
+			bool isCalleeFnSafe = AttrChecks::IsFnMethodTaggedSafe(calleeFn);
+			bool isCallerFnSafe = AttrChecks::IsFnMethodTaggedSafe(callers[0]);
+			                
 
 			if (isCallerFnSafe && !isCalleeFnSafe)
 			{
@@ -245,33 +297,36 @@ namespace
 		virtual std::unique_ptr<class ::ASTConsumer>
 		CreateASTConsumer(clang::CompilerInstance& Compiler, llvm::StringRef InFile)
 		{
+			GlobalContext = &Compiler.getASTContext();
 			return std::unique_ptr<class ::ASTConsumer>(
-				new FindNamedClassConsumer(&Compiler.getASTContext()));
+				new FindNamedClassConsumer(GlobalContext));
 		}
 	};
 
 } // namespace
 
+
+
 int main(int argc, const char **argv) 
 {
-  using namespace clang::tooling;
+	using namespace clang::tooling;
+	
+	AttrChecks Checker{};
+	Checker.Initialize();
 
-  AttrChecks Checker{};
-  Checker.Initialize();
+	CommonOptionsParser op(argc, argv, llvm::cl::GeneralCategory,
+		llvm::cl::ZeroOrMore,
+		"Clang-based checking tool for attributes check");
 
-  CommonOptionsParser op(argc, argv, llvm::cl::GeneralCategory,
-                         llvm::cl::ZeroOrMore,
-                         "Clang-based checking tool for attributes check");
+	llvm::outs() << "\n\n";
 
-  llvm::outs() << "\n\n";
+	//std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-  std::this_thread::sleep_for(std::chrono::seconds(5));
+	ClangTool Tool(op.getCompilations(), op.getSourcePathList());
+	auto frontAction = newFrontendActionFactory<FindNamedClassAction>();
+	int result = Tool.run(frontAction.get());
 
-  ClangTool Tool(op.getCompilations(), op.getSourcePathList());
-  auto frontAction = newFrontendActionFactory<FindNamedClassAction>();
-  int result = Tool.run(frontAction.get());
+	Checker.Finalize();
 
-  Checker.Finalize();
-
-  return 0;
+	return 0;
 }
