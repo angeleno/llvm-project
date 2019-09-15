@@ -81,7 +81,7 @@ static Attr *handleMyCustomAttr(Sema &S, Stmt *St, const ParsedAttr &A,
     return nullptr;
   }
 
-  std::vector<StringRef> DiagnosticIdentifiers;
+  std::vector<StringRef> AttributeParameters;
   for (unsigned I = 0, E = A.getNumArgs(); I != E; ++I) {
     StringRef RuleName;
 
@@ -90,11 +90,11 @@ static Attr *handleMyCustomAttr(Sema &S, Stmt *St, const ParsedAttr &A,
 
     // FIXME: Warn if the rule name is unknown. This is tricky because only
     // clang-tidy knows about available rules.
-    DiagnosticIdentifiers.push_back(RuleName);
+    AttributeParameters.push_back(RuleName);
   }
 
   return ::new (S.Context) MyCustomAttr(
-      S.Context, A, DiagnosticIdentifiers.data(), DiagnosticIdentifiers.size());
+      S.Context, A, AttributeParameters.data(), AttributeParameters.size());
 }
 
 static Attr *handleLoopHintAttr(Sema &S, Stmt *St, const ParsedAttr &A,

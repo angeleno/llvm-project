@@ -4324,7 +4324,7 @@ static void handleMyCustomAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   if (!checkAttributeAtLeastNumArgs(S, AL, 1))
     return;
 
-  std::vector<StringRef> DiagnosticIdentifiers;
+  std::vector<StringRef> AttributeParameters;
   for (unsigned I = 0, E = AL.getNumArgs(); I != E; ++I) {
     StringRef RuleName;
 
@@ -4333,11 +4333,10 @@ static void handleMyCustomAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
 
     // FIXME: Warn if the rule name is unknown. This is tricky because only
     // clang-tidy knows about available rules.
-    DiagnosticIdentifiers.push_back(RuleName);
+    AttributeParameters.push_back(RuleName);
   }
-  D->addAttr(::new (S.Context)
-                 MyCustomAttr(S.Context, AL, DiagnosticIdentifiers.data(),
-                              DiagnosticIdentifiers.size()));
+  D->addAttr(::new (S.Context) MyCustomAttr(
+      S.Context, AL, AttributeParameters.data(), AttributeParameters.size()));
 }
 
 static void handleSuppressAttr(Sema &S, Decl *D, const ParsedAttr &AL) {

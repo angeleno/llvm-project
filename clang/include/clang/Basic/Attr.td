@@ -2055,7 +2055,7 @@ def Suppress : StmtAttr {
 
 def MyCustom : StmtAttr {
   let Spellings = [CXX11<"my", "custattr">];
-  let Args = [VariadicStringArgument<"DiagnosticIdentifiers">];
+  let Args = [VariadicStringArgument<"AttributeParameters">];
   let Documentation = [Undocumented];
 }
 
