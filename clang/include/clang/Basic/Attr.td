@@ -2053,6 +2053,12 @@ def Suppress : StmtAttr {
   let Documentation = [SuppressDocs];
 }
 
+def MyCustom : StmtAttr {
+  let Spellings = [CXX11<"my", "custattr">];
+  let Args = [VariadicStringArgument<"DiagnosticIdentifiers">];
+  let Documentation = [Undocumented];
+}
+
 def SysVABI : DeclOrTypeAttr {
   let Spellings = [GCC<"sysv_abi">];
 //  let Subjects = [Function, ObjCMethod];
